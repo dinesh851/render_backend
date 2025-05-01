@@ -709,7 +709,9 @@ def health_check(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail="Database connection error")
 from sqlalchemy import inspect, text
-
+@app.get("/url")
+def retrunurl():
+    return DATABASE_URL
 @app.get("/tables")
 def list_all_tables(
     db: Session = Depends(get_db)
@@ -725,8 +727,21 @@ def list_all_tables(
             tables_info[table_name] = {"rows": row_count}
         except Exception as e:
             tables_info[table_name] = {"error": str(e)}
+    all_data = {}
 
-    return tables_info
+    for table_name in inspector.get_table_names():
+        try:
+            # Safe quoting for table name
+            query = text(f'SELECT * FROM "{table_name}"')
+            result = db.execute(query)
+            rows = [dict(row._mapping) for row in result]  # Convert Row object to dict
+            all_data[table_name] = rows
+        except Exception as e:
+            all_data[table_name] = {"error": str(e)}
+
+    # return all_data
+
+    return {"tables_info": tables_info, "all_data": all_data}
 
 # Run with: uvicorn main:app --reload
 if __name__ == "__main__":
