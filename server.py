@@ -172,7 +172,7 @@ class PatientCreate(BaseModel):
     date_of_birth: Optional[datetime] = None
 
 class PatientResponse(BaseModel):
-    id: int
+    id: str
     name: str
     mobile_number: str
     email: Optional[str] = None
