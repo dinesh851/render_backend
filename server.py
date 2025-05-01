@@ -16,6 +16,7 @@ import jwt
 from dotenv import load_dotenv
 import logging
 from sqlalchemy.orm import Session
+from sqlalchemy import inspect, text
 from sqlalchemy import exc
 # Load environment variables
 load_dotenv()
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Database connectionAAAA
 DATABASE_URL = os.getenv("DATABASE_URL")
-
+ 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -699,6 +700,33 @@ def create_initial_data():
         logger.error(f"Error creating initial data: {str(e)}")
     finally:
         db.close()
+@app.get("/healthcheck", status_code=200)
+def health_check(db: Session = Depends(get_db)):
+    """Check if the database connection is healthy"""
+    try:
+        db.execute("SELECT 1")
+        return {"status": "healthy"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Database connection error")
+from sqlalchemy import inspect, text
+
+@app.get("/tables")
+def list_all_tables(
+    db: Session = Depends(get_db)
+):
+    """List all tables in the database and their row counts (admin only)"""
+    inspector = inspect(db.bind)
+    tables_info = {}
+
+    for table_name in inspector.get_table_names():
+        try:
+            result = db.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
+            row_count = result.scalar()
+            tables_info[table_name] = {"rows": row_count}
+        except Exception as e:
+            tables_info[table_name] = {"error": str(e)}
+
+    return tables_info
 
 # Run with: uvicorn main:app --reload
 if __name__ == "__main__":
