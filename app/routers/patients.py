@@ -21,3 +21,4 @@ def update_patient_profile(
     if not updated_patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     return updated_patient
+
