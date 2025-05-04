@@ -8,6 +8,7 @@ from app.database import get_db
 from app.config import settings
 import random
 import logging
+from app.auth import send_otp_email
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
@@ -53,7 +54,7 @@ def send_otp(request: schemas.OTPRequest, db: Session = Depends(get_db)):
     )
     db.add(db_otp)
     db.commit()
-    
+    send_otp_email(int(otp))
     logger.info(f"OTP sent to {request.mobile_number}: {otp}")
     print(f"OTP sent to {request.mobile_number}: {otp}")
     return {"mobile_number": request.mobile_number}
