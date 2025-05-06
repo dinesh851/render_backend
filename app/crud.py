@@ -10,10 +10,10 @@ def generate_patient_id(db: Session) -> str:
     while True:
         # First character 'P', next 6 random (uppercase letters + digits)
         random_part = ''.join(random.choices(
-            string.ascii_uppercase + string.digits,  # A-Z + 0-9
+            string.ascii_lowercase + string.digits,  # A-Z + 0-9
             k=6
         ))
-        patient_id = f"P{random_part}"  # e.g., "P1A3B7C"
+        patient_id = f"p{random_part}"  # e.g., "P1A3B7C"
 
         # Check if ID exists
         if not db.query(models.Patient).filter(models.Patient.id == patient_id).first():
