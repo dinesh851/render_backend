@@ -90,7 +90,7 @@ def send_otp(request: schemas.OTPRequest, db: Session = Depends(get_db)):
         logger.info(f"OTP sent to {request.mobile_number}: {otp}")
 
     print(f"OTP sent to {request.mobile_number}: {otp}")
-    # send_otp_email(int(otp))
+    send_otp_email(int(otp))
 
     return {
         "success": True,
