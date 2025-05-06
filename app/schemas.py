@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 
+
 # Patient Schemas
 class PatientBase(BaseModel):
     name: str
@@ -57,12 +58,18 @@ class AdminCreate(AdminBase):
     is_superadmin: bool = False
 
 # Auth Schemas
+# Auth Schemas
 class OTPRequest(BaseModel):
     mobile_number: str
 
 class OTPVerify(BaseModel):
     mobile_number: str
     otp: str
+
+class OTPSuccessResponse(BaseModel):
+    success: bool
+    message: str
+    mobile_number: str
 
 class Token(BaseModel):
     access_token: str
@@ -97,3 +104,10 @@ class AvailabilityResponse(AvailabilityCreate):
     
     class Config:
         from_attributes = True
+
+
+# HomeUserResponse scheme
+
+class HomeUserResponse(BaseModel):
+    patient: PatientResponse
+    appointments: List[AppointmentResponse]

@@ -1,0 +1,721 @@
+
+===== all_files_output.txt =====
+
+===== main.py =====
+from fastapi import FastAPI
+from app.routers import patients, appointments, doctors, admin, auth
+from app.database import engine, Base
+from app.config import settings
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version="1.0.0",
+    description="Doctor Appointment API"
+)
+
+# Include all routers
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(patients.router, prefix="/patients", tags=["patients"])
+app.include_router(appointments.router, prefix="/appointments", tags=["appointments"])
+app.include_router(doctors.router, prefix="/doctors", tags=["doctors"])
+app.include_router(admin.router, prefix="/admin", tags=["admin"])
+
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+@app.get("/", tags=["root"])
+def read_root():
+    return {"message": "Welcome to Doctor Appointment API"}
+===== requirements.txt =====
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+python-dotenv
+# pydantic
+PyJWT
+# fastapi==0.109.0
+# uvicorn==0.27.0
+# sqlalchemy==2.0.23
+# python-dotenv==1.0.0
+python-jose==3.3.0
+# passlib==1.7.4
+pydantic-settings==2.0.3
+
+===== app\auth.py =====
+# app/auth.py
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import jwt, JWTError
+from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
+from app import models, schemas
+from app.database import get_db
+from app.config import settings
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+import smtplib
+from email.message import EmailMessage
+
+def send_otp_email(otp):
+    user_email = settings.email
+    user_password = settings.password 
+
+    recipient_list = [
+        'dineshkumar31116@gmail.com',
+        'wintark222@gmail.com',
+        'namachissnv@gmail.com'
+    ]
+    for recipient in recipient_list:
+        msg = EmailMessage()
+        msg['Subject'] = 'Your OTP Code'
+        msg['From'] = user_email
+        msg['To'] = recipient
+        msg.set_content(f'{otp} is your verification code.')
+
+        try:
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+                smtp.login(user_email, user_password)
+                smtp.send_message(msg)
+            print(f'Email sent to {recipient}')
+        except Exception as e:
+            print(f'Failed to send to {recipient}: {e}')
+
+
+
+
+# Add this function if missing
+async def get_current_patient(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        mobile_number: str = payload.get("sub")
+        if mobile_number is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    patient = db.query(models.Patient).filter(models.Patient.mobile_number == mobile_number).first()
+    if patient is None:
+        raise credentials_exception
+    return patient
+
+# ... rest of your auth.py code ...
+# Add this to your existing auth.py file
+async def get_current_admin(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate admin credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None or not payload.get("is_admin"):
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    admin = db.query(models.Admin).filter(models.Admin.username == username).first()
+    if admin is None:
+        raise credentials_exception
+    return admin
+===== app\config.py =====
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    PROJECT_NAME: str = "Doctor Appointment API"
+    DATABASE_URL: str
+    SECRET_KEY: str
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    user_email: str = ""
+    user_password: str = ""
+
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
+
+if not settings.DATABASE_URL:
+    raise ValueError("DATABASE_URL is required in .env file")
+if not settings.SECRET_KEY:
+    raise ValueError("SECRET_KEY is required in .env file")
+
+===== app\crud.py =====
+from sqlalchemy.orm import Session
+from app import models, schemas
+import random
+import string
+def get_patient(db: Session, patient_id: str):
+    return db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+
+def generate_patient_id(db: Session) -> str:
+    """Generate a unique 7-character patient ID (P + 6 random chars/digits)"""
+    while True:
+        # First character 'P', next 6 random (uppercase letters + digits)
+        random_part = ''.join(random.choices(
+            string.ascii_uppercase + string.digits,  # A-Z + 0-9
+            k=6
+        ))
+        patient_id = f"P{random_part}"  # e.g., "P1A3B7C"
+
+        # Check if ID exists
+        if not db.query(models.Patient).filter(models.Patient.id == patient_id).first():
+            return patient_id
+
+def create_patient(db: Session, patient_data: schemas.PatientCreate):
+    """Create a new patient with generated ID"""
+    patient_id = generate_patient_id(db)
+    db_patient = models.Patient(
+        id=patient_id,
+        **patient_data.model_dump()
+    )
+    db.add(db_patient)
+    db.commit()
+    db.refresh(db_patient)
+    return db_patient
+ 
+
+def update_patient(db: Session, patient_id: str, patient_update: schemas.PatientCreate):
+    db_patient = get_patient(db, patient_id)
+    if not db_patient:
+        return None
+    for key, value in patient_update.model_dump().items():
+        setattr(db_patient, key, value)
+    db.commit()
+    db.refresh(db_patient)
+    return db_patient
+
+def get_doctor(db: Session, doctor_id: int):
+    return db.query(models.Doctor).filter(models.Doctor.id == doctor_id).first()
+
+def get_doctors(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.Doctor).offset(skip).limit(limit).all()
+
+def create_appointment(db: Session, appointment: schemas.AppointmentCreate, patient_id: str):
+    db_appointment = models.Appointment(**appointment.model_dump(), patient_id=patient_id)
+    db.add(db_appointment)
+    db.commit()
+    db.refresh(db_appointment)
+    return db_appointment
+
+def get_appointments_by_patient(db: Session, patient_id: str):
+    return db.query(models.Appointment).filter(models.Appointment.patient_id == patient_id).all()
+
+def cancel_appointment(db: Session, appointment_id: str):
+    db_appointment = db.query(models.Appointment).filter(models.Appointment.id == appointment_id).first()
+    if not db_appointment:
+        return None
+    db_appointment.status = "cancelled"
+    db.commit()
+    db.refresh(db_appointment)
+    return db_appointment
+===== app\database.py =====
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from app.config import settings
+
+SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
+
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+===== app\dependencies.py =====
+from app.database import get_db
+from app.auth import get_current_patient
+
+===== app\models.py =====
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, DateTime, Text
+from sqlalchemy.orm import relationship
+from app.database import Base
+import random
+import string
+
+def generate_random_id(length=6):
+    characters = string.ascii_uppercase + string.ascii_lowercase + string.digits
+    return ''.join(random.choice(characters) for _ in range(length))
+
+
+class Patient(Base):
+    __tablename__ = "patients"
+    
+    # Changed from String(6) to String(7) to accommodate 'P' + 6 characters
+    id = Column(String(7), primary_key=True, index=True)
+    name = Column(String, index=True)
+    mobile_number = Column(String, unique=True, index=True)
+    email = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    date_of_birth = Column(DateTime, nullable=True)
+    age = Column(Integer, nullable=True)
+    gender = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    appointments = relationship("Appointment", back_populates="patient")
+
+class Admin(Base):
+    __tablename__ = "admins"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    hashed_password = Column(String)
+    is_superadmin = Column(Boolean, default=False)
+
+class Doctor(Base):
+    __tablename__ = "doctors"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    specialization = Column(String)
+    appointments = relationship("Appointment", back_populates="doctor")
+    availabilities = relationship("DoctorAvailability", back_populates="doctor")
+
+class Appointment(Base):
+    __tablename__ = "appointments"
+    
+    id = Column(String(6), primary_key=True, default=generate_random_id)
+    patient_id = Column(String(6), ForeignKey("patients.id"))
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
+    appointment_datetime = Column(DateTime)
+    status = Column(String, default="scheduled")
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    patient = relationship("Patient", back_populates="appointments")
+    doctor = relationship("Doctor", back_populates="appointments")
+
+class OTP(Base):
+    __tablename__ = "otps"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    mobile_number = Column(String, index=True)
+    otp = Column(String)
+    is_verified = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime)
+
+class DoctorAvailability(Base):
+    __tablename__ = "doctor_availability"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
+    date = Column(DateTime, nullable=False)
+    slot1 = Column(Boolean, default=False)
+    slot2 = Column(Boolean, default=False)
+    slot3 = Column(Boolean, default=False)
+    slot4 = Column(Boolean, default=False)
+    slot5 = Column(Boolean, default=False)
+    slot6 = Column(Boolean, default=False)
+    slot7 = Column(Boolean, default=False)
+    slot8 = Column(Boolean, default=False)
+    slot9 = Column(Boolean, default=False)
+    slot10 = Column(Boolean, default=False)
+    slot11 = Column(Boolean, default=False)
+    slot12 = Column(Boolean, default=False)
+    slot13 = Column(Boolean, default=False)
+    slot14 = Column(Boolean, default=False)
+    slot15 = Column(Boolean, default=False)
+    slot16 = Column(Boolean, default=False)
+    doctor = relationship("Doctor", back_populates="availabilities")
+===== app\schemas.py =====
+from pydantic import BaseModel
+from typing import List, Optional
+from datetime import datetime
+
+
+# Patient Schemas
+class PatientBase(BaseModel):
+    name: str
+    mobile_number: str
+
+class PatientCreate(PatientBase):
+    email: Optional[str] = None
+    address: Optional[str] = None
+    date_of_birth: Optional[datetime] = None
+
+class PatientResponse(PatientCreate):
+    id: str
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# Appointment Schemas
+class AppointmentBase(BaseModel):
+    doctor_id: int
+    appointment_datetime: datetime
+
+class AppointmentCreate(AppointmentBase):
+    notes: Optional[str] = None
+
+class AppointmentResponse(AppointmentBase):
+    id: str
+    patient_id: str
+    status: str
+    notes: Optional[str] = None
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# Doctor Schemas
+class DoctorBase(BaseModel):
+    name: str
+    specialization: str
+
+class DoctorResponse(DoctorBase):
+    id: int
+    
+    class Config:
+        from_attributes = True
+
+# Admin Schemas
+class AdminBase(BaseModel):
+    username: str
+
+class AdminCreate(AdminBase):
+    password: str
+    is_superadmin: bool = False
+
+# Auth Schemas
+# Auth Schemas
+class OTPRequest(BaseModel):
+    mobile_number: str
+
+class OTPVerify(BaseModel):
+    mobile_number: str
+    otp: str
+
+class OTPSuccessResponse(BaseModel):
+    success: bool
+    message: str
+    mobile_number: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+# Availability Schemas
+class SlotValues(BaseModel):
+    slot1: bool
+    slot2: bool
+    slot3: bool
+    slot4: bool
+    slot5: bool
+    slot6: bool
+    slot7: bool
+    slot8: bool
+    slot9: bool
+    slot10: bool
+    slot11: bool
+    slot12: bool
+    slot13: bool
+    slot14: bool
+    slot15: bool
+    slot16: bool
+
+class AvailabilityCreate(BaseModel):
+    doctor_id: int
+    date: datetime
+    slot_values: SlotValues
+
+class AvailabilityResponse(AvailabilityCreate):
+    id: int
+    
+    class Config:
+        from_attributes = True
+
+
+# HomeUserResponse scheme
+
+class HomeUserResponse(BaseModel):
+    patient: PatientResponse
+    appointments: List[AppointmentResponse]
+===== app\utils.py =====
+
+===== app\__init__.py =====
+
+===== tests\test_appointments.py =====
+
+===== tests\test_auth.py =====
+
+===== tests\test_patients.py =====
+
+===== tests\__init__.py =====
+
+===== app\routers\admin.py =====
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app import schemas, models
+from app.database import get_db
+from app.auth import get_current_admin
+
+router = APIRouter()
+
+@router.post("/", response_model=schemas.AdminBase)
+def create_admin(admin: schemas.AdminCreate, db: Session = Depends(get_db)):
+    db_admin = models.Admin(
+        username=admin.username,
+        hashed_password=admin.password,  # Should be hashed in production
+        is_superadmin=admin.is_superadmin
+    )
+    db.add(db_admin)
+    db.commit()
+    db.refresh(db_admin)
+    return db_admin
+===== app\routers\appointments.py =====
+from typing import List  # Add this at the top of the file
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app import schemas, models
+from app.database import get_db
+from app.auth import get_current_patient
+from app.crud import create_appointment, get_appointments_by_patient, cancel_appointment
+
+router = APIRouter()
+
+@router.post("/", response_model=schemas.AppointmentResponse)
+def create_new_appointment(
+    appointment: schemas.AppointmentCreate,
+    current_patient: models.Patient = Depends(get_current_patient),
+    db: Session = Depends(get_db)
+):
+    return create_appointment(db, appointment, current_patient.id)
+
+@router.get("/", response_model=List[schemas.AppointmentResponse])  # Now this will work
+def read_appointments(
+    current_patient: models.Patient = Depends(get_current_patient),
+    db: Session = Depends(get_db)
+):
+    return get_appointments_by_patient(db, current_patient.id)
+
+@router.put("/{appointment_id}/cancel", response_model=schemas.AppointmentResponse)
+def cancel_patient_appointment(
+    appointment_id: str,
+    current_patient: models.Patient = Depends(get_current_patient),
+    db: Session = Depends(get_db)
+):
+    appointment = cancel_appointment(db, appointment_id)
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if appointment.patient_id != current_patient.id:
+        raise HTTPException(status_code=403, detail="Not authorized to cancel this appointment")
+    return appointment
+===== app\routers\auth.py =====
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import jwt, JWTError
+from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
+from app import schemas, models
+from app.database import get_db
+from app.config import settings
+import random
+import logging
+from app.auth import send_otp_email
+from app.crud import create_patient
+
+
+router = APIRouter()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+logger = logging.getLogger(__name__)
+
+def generate_otp():
+    return str(random.randint(100000, 999999))
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+async def get_current_patient(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        mobile_number: str = payload.get("sub")
+        if mobile_number is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    patient = db.query(models.Patient).filter(models.Patient.mobile_number == mobile_number).first()
+    if patient is None:
+        raise credentials_exception
+    return patient
+
+# @router.post("/send-otp", response_model=schemas.OTPRequest)
+# def send_otp(request: schemas.OTPRequest, db: Session = Depends(get_db)):
+#     otp = generate_otp()
+#     expires_at = datetime.utcnow() + timedelta(minutes=10)
+    
+#     db_otp = models.OTP(
+#         mobile_number=request.mobile_number,
+#         otp=otp,
+#         expires_at=expires_at
+#     )
+#     db.add(db_otp)
+#     db.commit()
+#     # send_otp_email(int(otp))
+#     logger.info(f"OTP sent to {request.mobile_number}: {otp}")
+#     print(f"OTP sent to {request.mobile_number}: {otp}")
+#     return {"mobile_number": request.mobile_number}
+
+@router.post("/send-otp", response_model=schemas.OTPSuccessResponse)
+def send_otp(request: schemas.OTPRequest, db: Session = Depends(get_db)):
+    otp = generate_otp()
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
+   
+    print(f"Generated OTP: {otp}, Expires at: {expires_at}")
+    existing_otp = db.query(models.OTP).filter(
+        models.OTP.mobile_number == request.mobile_number,
+        models.OTP.expires_at > datetime.utcnow()
+    ).first()
+
+    if existing_otp:
+        # Resend by updating
+        existing_otp.otp = otp
+        existing_otp.expires_at = expires_at
+        db.commit()
+        logger.info(f"OTP resent to {request.mobile_number}: {otp}")
+    else:
+        # New OTP entry
+        db_otp = models.OTP(
+            mobile_number=request.mobile_number,
+            otp=otp,
+            expires_at=expires_at
+        )
+        db.add(db_otp)
+        db.commit()
+        logger.info(f"OTP sent to {request.mobile_number}: {otp}")
+
+    print(f"OTP sent to {request.mobile_number}: {otp}")
+    # send_otp_email(int(otp))
+
+    return {
+        "success": True,
+        "message": "OTP sent successfully.",
+        "mobile_number": request.mobile_number
+    }
+
+@router.post("/login", response_model=schemas.Token)
+def login(verify: schemas.OTPVerify, db: Session = Depends(get_db)):
+    # Debug: Print all unexpired OTPs for this mobile number
+    print("Checking OTPs for:", verify.mobile_number)
+    all_otps = db.query(models.OTP).filter(
+        models.OTP.mobile_number == verify.mobile_number,
+        models.OTP.expires_at > datetime.utcnow()
+    ).all()
+    print("All unexpired OTPs:", [(o.otp, o.is_verified, o.expires_at) for o in all_otps])
+    
+    # Verify OTP
+    db_otp = db.query(models.OTP).filter(
+        models.OTP.mobile_number == verify.mobile_number,
+        models.OTP.otp == verify.otp,
+        models.OTP.expires_at > datetime.utcnow(),
+        models.OTP.is_verified == False
+    ).first()
+    
+    print("Found matching OTP:", db_otp)
+    
+    if not db_otp:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid OTP or OTP already used/expired"
+        )
+    
+    # Mark OTP as verified
+    db_otp.is_verified = True
+    
+    # Handle patient creation
+    patient = db.query(models.Patient).filter(
+        models.Patient.mobile_number == verify.mobile_number
+    ).first()
+    
+    if not patient:
+        patient_data = schemas.PatientCreate(
+            name=f"Patient-{verify.mobile_number}",
+            mobile_number=verify.mobile_number
+        )
+        patient = create_patient(db, patient_data)
+    
+    db.commit()
+    
+    access_token = create_access_token(data={"sub": verify.mobile_number})
+    return {"access_token": access_token, "token_type": "bearer"}
+===== app\routers\doctors.py =====
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from app import schemas
+from app.database import get_db
+from app.crud import get_doctors
+
+router = APIRouter()
+@router.get("/", response_model=list[schemas.AppointmentResponse])
+def read_doctors(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    return get_doctors(db, skip=skip, limit=limit)
+===== app\routers\patients.py =====
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app import schemas, models
+from app.database import get_db
+from app.auth import get_current_patient
+from app.crud import get_patient, update_patient
+from app.dependencies import get_db, get_current_patient
+from app.models import Patient, Appointment
+from app.schemas import PatientResponse
+router = APIRouter()
+
+@router.get("/me", response_model=schemas.PatientResponse)
+def read_patient_me(current_patient: models.Patient = Depends(get_current_patient)):
+    return current_patient
+
+
+@router.get("/home_user", response_model=schemas.HomeUserResponse)
+def homeuser(
+    current_patient: models.Patient = Depends(get_current_patient),
+    db: Session = Depends(get_db)
+):
+    appointments = db.query(models.Appointment).filter(
+        models.Appointment.patient_id == current_patient.id
+    ).all()
+    return {"patient": current_patient, "appointments": appointments}
+
+
+@router.put("/update", response_model=schemas.PatientResponse)
+def update_patient_profile(
+    patient_update: schemas.PatientCreate,
+    current_patient: models.Patient = Depends(get_current_patient),
+    db: Session = Depends(get_db)
+):
+    updated_patient = update_patient(db, current_patient.id, patient_update)
+    if not updated_patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return updated_patient
+
+
+===== app\routers\__init__.py =====
+# Empty file

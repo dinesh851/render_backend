@@ -9,10 +9,12 @@ def generate_random_id(length=6):
     characters = string.ascii_uppercase + string.ascii_lowercase + string.digits
     return ''.join(random.choice(characters) for _ in range(length))
 
+
 class Patient(Base):
     __tablename__ = "patients"
     
-    id = Column(String(6), primary_key=True, default=generate_random_id)
+    # Changed from String(6) to String(7) to accommodate 'P' + 6 characters
+    id = Column(String(7), primary_key=True, index=True)
     name = Column(String, index=True)
     mobile_number = Column(String, unique=True, index=True)
     email = Column(String, nullable=True)
