@@ -14,8 +14,8 @@ import smtplib
 from email.message import EmailMessage
 
 def send_otp_email(otp):
-    user_email = settings.email
-    user_password = settings.password 
+    user_email = settings.user_email
+    user_password = settings.user_password 
 
     recipient_list = [
         'dineshkumar31116@gmail.com',
