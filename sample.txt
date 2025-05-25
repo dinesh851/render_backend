@@ -1,0 +1,646 @@
+# Doctor Appointment API Documentation
+
+## Base URL
+```
+http://localhost:8000
+```
+
+## Authentication
+Most endpoints require Bearer token authentication. Include the token in the Authorization header:
+```
+Authorization: Bearer <your_access_token>
+```
+
+---
+
+## 1. Authentication Endpoints
+
+### 1.1 Send OTP
+**Endpoint:** `/auth/send-otp`  
+**Method:** `POST`  
+**Description:** Send OTP to mobile number for authentication  
+**Authentication:** Not required
+
+**Sample Request Body:**
+```json
+{
+  "mobile_number": "9876543210"
+}
+```
+
+**Sample Response:**
+```json
+{
+  "success": true,
+  "message": "OTP sent successfully.",
+  "mobile_number": "9876543210"
+}
+```
+
+---
+
+### 1.2 Login/Verify OTP
+**Endpoint:** `/auth/login`  
+**Method:** `POST`  
+**Description:** Verify OTP and get access token  
+**Authentication:** Not required
+
+**Sample Request Body:**
+```json
+{
+  "mobile_number": "9876543210",
+  "otp": "123456"
+}
+```
+
+**Sample Response:**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer"
+}
+```
+
+---
+
+## 2. Admin Authentication Endpoints
+
+### 2.1 Admin Login
+**Endpoint:** `/auth/admin/login`  
+**Method:** `POST`  
+**Description:** Admin login with username/password  
+**Authentication:** Not required  
+**Content-Type:** `application/x-www-form-urlencoded`
+
+**Sample Request Body:**
+```
+username=admin
+password=admin123
+```
+
+**Sample Response:**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer"
+}
+```
+
+---
+
+### 2.2 Create Admin
+**Endpoint:** `/auth/admin/register`  
+**Method:** `POST`  
+**Description:** Create new admin account (requires existing admin auth)  
+**Authentication:** Required (Admin)
+
+**Sample Request Body:**
+```json
+{
+  "username": "newadmin",
+  "password": "newpassword123",
+  "is_superadmin": false
+}
+```
+
+**Sample Response:**
+```json
+{
+  "username": "newadmin"
+}
+```
+
+---
+
+## 3. Patient Endpoints
+
+### 3.1 Get Current Patient Profile
+**Endpoint:** `/patients/me`  
+**Method:** `GET`  
+**Description:** Get current patient's profile information  
+**Authentication:** Required (Patient)
+
+**Sample Response:**
+```json
+{
+  "id": "p1a2b3c",
+  "name": "John Doe",
+  "mobile_number": "9876543210",
+  "email": "john@example.com",
+  "address": "123 Main St, City",
+  "date_of_birth": "1990-01-15T00:00:00",
+  "created_at": "2023-12-01T10:30:00"
+}
+```
+
+---
+
+### 3.2 Get Patient Home Data
+**Endpoint:** `/patients/home_user`  
+**Method:** `GET`  
+**Description:** Get patient profile with their appointments  
+**Authentication:** Required (Patient)
+
+**Sample Response:**
+```json
+{
+  "patient": {
+    "id": "p1a2b3c",
+    "name": "John Doe",
+    "mobile_number": "9876543210",
+    "email": "john@example.com",
+    "address": "123 Main St, City",
+    "date_of_birth": "1990-01-15T00:00:00",
+    "created_at": "2023-12-01T10:30:00"
+  },
+  "appointments": [
+    {
+      "id": "abc123",
+      "patient_id": "p1a2b3c",
+      "doctor_id": 1,
+      "appointment_datetime": "2023-12-15T10:30:00",
+      "status": "waiting_approval",
+      "notes": "Regular checkup",
+      "created_at": "2023-12-01T10:30:00"
+    }
+  ]
+}
+```
+
+---
+
+### 3.3 Update Patient Profile
+**Endpoint:** `/patients/update`  
+**Method:** `PUT`  
+**Description:** Update current patient's profile  
+**Authentication:** Required (Patient)
+
+**Sample Request Body:**
+```json
+{
+  "name": "John Doe Updated",
+  "mobile_number": "9876543210",
+  "email": "john.updated@example.com",
+  "address": "456 New St, New City",
+  "date_of_birth": "1990-01-15T00:00:00"
+}
+```
+
+**Sample Response:**
+```json
+{
+  "id": "p1a2b3c",
+  "name": "John Doe Updated",
+  "mobile_number": "9876543210",
+  "email": "john.updated@example.com",
+  "address": "456 New St, New City",
+  "date_of_birth": "1990-01-15T00:00:00",
+  "created_at": "2023-12-01T10:30:00"
+}
+```
+
+---
+
+## 4. Doctor Endpoints
+
+### 4.1 Get All Doctors
+**Endpoint:** `/doctors/`  
+**Method:** `GET`  
+**Description:** Get list of all doctors  
+**Authentication:** Not required  
+**Query Parameters:**
+- `skip`: Number of records to skip (default: 0)
+- `limit`: Maximum number of records to return (default: 100)
+
+**Sample Response:**
+```json
+[
+  {
+    "id": 1,
+    "name": "Dr. Smith",
+    "specialization": "Cardiology"
+  },
+  {
+    "id": 2,
+    "name": "Dr. Johnson",
+    "specialization": "Dermatology"
+  }
+]
+```
+
+---
+
+### 4.2 Set Doctor Availability
+**Endpoint:** `/doctors/{doctor_id}/availability`  
+**Method:** `POST`  
+**Description:** Set doctor availability for multiple dates  
+**Authentication:** Required (Admin)
+
+**Sample Request Body:**
+```json
+{
+  "availability": [
+    {
+      "date": "2023-12-15",
+      "slot_values": {
+        "slot1": true,
+        "slot2": true,
+        "slot3": false,
+        "slot4": true,
+        "slot5": true,
+        "slot6": false,
+        "slot7": true,
+        "slot8": true,
+        "slot9": false,
+        "slot10": true,
+        "slot11": true,
+        "slot12": false,
+        "slot13": true,
+        "slot14": true,
+        "slot15": false,
+        "slot16": true
+      }
+    },
+    {
+      "date": "2023-12-16",
+      "slot_values": {
+        "slot1": true,
+        "slot2": false,
+        "slot3": true,
+        "slot4": true,
+        "slot5": false,
+        "slot6": true,
+        "slot7": true,
+        "slot8": false,
+        "slot9": true,
+        "slot10": true,
+        "slot11": false,
+        "slot12": true,
+        "slot13": true,
+        "slot14": false,
+        "slot15": true,
+        "slot16": true
+      }
+    }
+  ]
+}
+```
+
+**Sample Response:**
+```json
+{
+  "message": "Doctor availability updated successfully",
+  "doctor_id": 1,
+  "results": [
+    {
+      "date": "2023-12-15",
+      "action": "created",
+      "availability_id": 1
+    },
+    {
+      "date": "2023-12-16",
+      "action": "updated",
+      "availability_id": 2
+    }
+  ]
+}
+```
+
+---
+
+### 4.3 Get Doctor Availability
+**Endpoint:** `/doctors/{doctor_id}/availability`  
+**Method:** `GET`  
+**Description:** Get doctor availability for specified date range  
+**Authentication:** Not required  
+**Query Parameters:**
+- `start_date`: Start date in YYYY-MM-DD format (optional)
+- `end_date`: End date in YYYY-MM-DD format (optional)
+
+**Sample Response:**
+```json
+{
+  "doctor_id": 1,
+  "doctor_name": "Dr. Smith",
+  "availability": [
+    {
+      "id": 1,
+      "date": "2023-12-15",
+      "slots": {
+        "slot1": true,
+        "slot2": true,
+        "slot3": false,
+        "slot4": true,
+        "slot5": true,
+        "slot6": false,
+        "slot7": true,
+        "slot8": true,
+        "slot9": false,
+        "slot10": true,
+        "slot11": true,
+        "slot12": false,
+        "slot13": true,
+        "slot14": true,
+        "slot15": false,
+        "slot16": true
+      }
+    }
+  ]
+}
+```
+
+---
+
+### 4.4 Delete Doctor Availability
+**Endpoint:** `/doctors/{doctor_id}/availability/{date}`  
+**Method:** `DELETE`  
+**Description:** Delete doctor availability for a specific date  
+**Authentication:** Required (Admin)  
+**Path Parameters:**
+- `doctor_id`: Doctor ID
+- `date`: Date in YYYY-MM-DD format
+
+**Sample Response:**
+```json
+{
+  "message": "Availability deleted for doctor 1 on 2023-12-15"
+}
+```
+
+---
+
+## 5. Appointment Endpoints
+
+### 5.1 Create Appointment
+**Endpoint:** `/appointments/`  
+**Method:** `POST`  
+**Description:** Create new appointment (status: waiting_approval)  
+**Authentication:** Required (Patient)
+
+**Sample Request Body:**
+```json
+{
+  "doctor_id": 1,
+  "appointment_datetime": "2023-12-15T10:30:00",
+  "notes": "Regular checkup appointment"
+}
+```
+
+**Sample Response:**
+```json
+{
+  "id": "abc123",
+  "patient_id": "p1a2b3c",
+  "doctor_id": 1,
+  "appointment_datetime": "2023-12-15T10:30:00",
+  "status": "waiting_approval",
+  "notes": "Regular checkup appointment",
+  "created_at": "2023-12-01T10:30:00"
+}
+```
+
+---
+
+### 5.2 Get Patient Appointments
+**Endpoint:** `/appointments/`  
+**Method:** `GET`  
+**Description:** Get all appointments for current patient  
+**Authentication:** Required (Patient)
+
+**Sample Response:**
+```json
+[
+  {
+    "id": "abc123",
+    "patient_id": "p1a2b3c",
+    "doctor_id": 1,
+    "appointment_datetime": "2023-12-15T10:30:00",
+    "status": "waiting_approval",
+    "notes": "Regular checkup",
+    "created_at": "2023-12-01T10:30:00"
+  },
+  {
+    "id": "def456",
+    "patient_id": "p1a2b3c",
+    "doctor_id": 2,
+    "appointment_datetime": "2023-12-20T14:00:00",
+    "status": "approved",
+    "notes": "Follow-up visit",
+    "created_at": "2023-12-02T15:20:00"
+  }
+]
+```
+
+---
+
+### 5.3 Cancel Appointment (Patient)
+**Endpoint:** `/appointments/{appointment_id}/cancel`  
+**Method:** `PUT`  
+**Description:** Cancel appointment (only patient's own appointments)  
+**Authentication:** Required (Patient)
+
+**Sample Response:**
+```json
+{
+  "id": "abc123",
+  "patient_id": "p1a2b3c",
+  "doctor_id": 1,
+  "appointment_datetime": "2023-12-15T10:30:00",
+  "status": "cancelled",
+  "notes": "Regular checkup",
+  "created_at": "2023-12-01T10:30:00"
+}
+```
+
+---
+
+## 6. Admin Appointment Management Endpoints
+
+### 6.1 Get All Appointments (Admin)
+**Endpoint:** `/appointments/admin/all`  
+**Method:** `GET`  
+**Description:** Get all appointments in system  
+**Authentication:** Required (Admin)  
+**Query Parameters:**
+- `skip`: Number of records to skip (default: 0)
+- `limit`: Maximum number of records to return (default: 100)
+- `status`: Filter by status (optional)
+
+**Sample Response:**
+```json
+[
+  {
+    "id": "abc123",
+    "patient_id": "p1a2b3c",
+    "doctor_id": 1,
+    "appointment_datetime": "2023-12-15T10:30:00",
+    "status": "waiting_approval",
+    "notes": "Regular checkup",
+    "created_at": "2023-12-01T10:30:00"
+  },
+  {
+    "id": "def456",
+    "patient_id": "p4d5e6f",
+    "doctor_id": 2,
+    "appointment_datetime": "2023-12-16T11:00:00",
+    "status": "approved",
+    "notes": "Follow-up",
+    "created_at": "2023-12-01T11:00:00"
+  }
+]
+```
+
+---
+
+### 6.2 Approve Appointment
+**Endpoint:** `/appointments/{appointment_id}/approve`  
+**Method:** `PUT`  
+**Description:** Approve appointment (change status from waiting_approval to approved)  
+**Authentication:** Required (Admin)
+
+**Sample Response:**
+```json
+{
+  "id": "abc123",
+  "patient_id": "p1a2b3c",
+  "doctor_id": 1,
+  "appointment_datetime": "2023-12-15T10:30:00",
+  "status": "approved",
+  "notes": "Regular checkup",
+  "created_at": "2023-12-01T10:30:00"
+}
+```
+
+---
+
+### 6.3 Mark Appointment as Done
+**Endpoint:** `/appointments/{appointment_id}/done`  
+**Method:** `PUT`  
+**Description:** Mark appointment as completed (change status from approved to done)  
+**Authentication:** Required (Admin)
+
+**Sample Response:**
+```json
+{
+  "id": "abc123",
+  "patient_id": "p1a2b3c",
+  "doctor_id": 1,
+  "appointment_datetime": "2023-12-15T10:30:00",
+  "status": "done",
+  "notes": "Regular checkup",
+  "created_at": "2023-12-01T10:30:00"
+}
+```
+
+---
+
+### 6.4 Cancel Appointment (Admin)
+**Endpoint:** `/appointments/{appointment_id}/cancel-admin`  
+**Method:** `PUT`  
+**Description:** Cancel appointment (admin can cancel any appointment except done ones)  
+**Authentication:** Required (Admin)
+
+**Sample Response:**
+```json
+{
+  "id": "abc123",
+  "patient_id": "p1a2b3c",
+  "doctor_id": 1,
+  "appointment_datetime": "2023-12-15T10:30:00",
+  "status": "cancelled",
+  "notes": "Regular checkup",
+  "created_at": "2023-12-01T10:30:00"
+}
+```
+
+---
+
+## 7. Root Endpoint
+
+### 7.1 Welcome Message
+**Endpoint:** `/`  
+**Method:** `GET`  
+**Description:** Welcome message and API status  
+**Authentication:** Not required
+
+**Sample Response:**
+```json
+{
+  "message": "Welcome to Doctor Appointment API"
+}
+```
+
+---
+
+## Time Slots Information
+
+The system uses 16 time slots per day:
+- **Slot 1:** 09:00 - 09:30
+- **Slot 2:** 09:30 - 10:00
+- **Slot 3:** 10:00 - 10:30
+- **Slot 4:** 10:30 - 11:00
+- **Slot 5:** 11:00 - 11:30
+- **Slot 6:** 11:30 - 12:00
+- **Slot 7:** 12:00 - 12:30
+- **Slot 8:** 12:30 - 13:00
+- **Slot 9:** 13:00 - 13:30
+- **Slot 10:** 13:30 - 14:00
+- **Slot 11:** 14:00 - 14:30
+- **Slot 12:** 14:30 - 15:00
+- **Slot 13:** 15:00 - 15:30
+- **Slot 14:** 15:30 - 16:00
+- **Slot 15:** 16:00 - 16:30
+- **Slot 16:** 16:30 - 17:00
+
+## Appointment Status Flow
+
+1. **waiting_approval** - Initial status when patient creates appointment
+2. **approved** - Admin approves the appointment
+3. **done** - Admin marks appointment as completed
+4. **cancelled** - Appointment cancelled by patient or admin
+
+## Error Responses
+
+### Common Error Formats:
+
+**400 Bad Request:**
+```json
+{
+  "detail": "Invalid OTP or OTP already used/expired"
+}
+```
+
+**401 Unauthorized:**
+```json
+{
+  "detail": "Could not validate credentials"
+}
+```
+
+**403 Forbidden:**
+```json
+{
+  "detail": "Not authorized to cancel this appointment"
+}
+```
+
+**404 Not Found:**
+```json
+{
+  "detail": "Appointment not found"
+}
+```
+
+**422 Validation Error:**
+```json
+{
+  "detail": [
+    {
+      "loc": ["body", "mobile_number"],
+      "msg": "field required",
+      "type": "value_error.missing"
+    }
+  ]
+}
+```
+

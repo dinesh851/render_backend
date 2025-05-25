@@ -49,7 +49,7 @@ class Appointment(Base):
     patient_id = Column(String(6), ForeignKey("patients.id"))
     doctor_id = Column(Integer, ForeignKey("doctors.id"))
     appointment_datetime = Column(DateTime)
-    status = Column(String, default="scheduled")
+    status = Column(String(50), default="scheduled")
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     patient = relationship("Patient", back_populates="appointments")

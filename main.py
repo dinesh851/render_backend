@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routers import patients, appointments, doctors, admin, auth
+from app.routers import patients, appointments, doctors, admin, auth, admin_auth
 from app.database import engine, Base
 from app.config import settings
 
@@ -11,6 +11,7 @@ app = FastAPI(
 
 # Include all routers
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(admin_auth.router, prefix="/auth", tags=["admin-auth"])  # Add admin auth router
 app.include_router(patients.router, prefix="/patients", tags=["patients"])
 app.include_router(appointments.router, prefix="/appointments", tags=["appointments"])
 app.include_router(doctors.router, prefix="/doctors", tags=["doctors"])

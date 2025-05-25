@@ -3,7 +3,7 @@
 
 ===== main.py =====
 from fastapi import FastAPI
-from app.routers import patients, appointments, doctors, admin, auth
+from app.routers import patients, appointments, doctors, admin, auth, admin_auth
 from app.database import engine, Base
 from app.config import settings
 
@@ -15,6 +15,7 @@ app = FastAPI(
 
 # Include all routers
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(admin_auth.router, prefix="/auth", tags=["admin-auth"])  # Add admin auth router
 app.include_router(patients.router, prefix="/patients", tags=["patients"])
 app.include_router(appointments.router, prefix="/appointments", tags=["appointments"])
 app.include_router(doctors.router, prefix="/doctors", tags=["doctors"])
@@ -59,8 +60,8 @@ import smtplib
 from email.message import EmailMessage
 
 def send_otp_email(otp):
-    user_email = settings.email
-    user_password = settings.password 
+    user_email = settings.user_email
+    user_password = settings.user_password 
 
     recipient_list = [
         'dineshkumar31116@gmail.com',
@@ -154,22 +155,25 @@ if not settings.SECRET_KEY:
     raise ValueError("SECRET_KEY is required in .env file")
 
 ===== app\crud.py =====
+# app/crud.py
+from datetime import datetime
 from sqlalchemy.orm import Session
 from app import models, schemas
 import random
 import string
+
 def get_patient(db: Session, patient_id: str):
     return db.query(models.Patient).filter(models.Patient.id == patient_id).first()
 
 def generate_patient_id(db: Session) -> str:
     """Generate a unique 7-character patient ID (P + 6 random chars/digits)"""
     while True:
-        # First character 'P', next 6 random (uppercase letters + digits)
+        # First character 'p', next 6 random (lowercase letters + digits)
         random_part = ''.join(random.choices(
-            string.ascii_uppercase + string.digits,  # A-Z + 0-9
+            string.ascii_lowercase + string.digits,  # a-z + 0-9
             k=6
         ))
-        patient_id = f"P{random_part}"  # e.g., "P1A3B7C"
+        patient_id = f"p{random_part}"  # e.g., "p1a3b7c"
 
         # Check if ID exists
         if not db.query(models.Patient).filter(models.Patient.id == patient_id).first():
@@ -186,7 +190,6 @@ def create_patient(db: Session, patient_data: schemas.PatientCreate):
     db.commit()
     db.refresh(db_patient)
     return db_patient
- 
 
 def update_patient(db: Session, patient_id: str, patient_update: schemas.PatientCreate):
     db_patient = get_patient(db, patient_id)
@@ -204,18 +207,110 @@ def get_doctor(db: Session, doctor_id: int):
 def get_doctors(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.Doctor).offset(skip).limit(limit).all()
 
+def time_to_slot_index(hour: int, minute: int = 0) -> int:
+    """
+    Convert time to slot index (1-16)
+    Assuming slots are:
+    9:00-9:30 = slot1, 9:30-10:00 = slot2, ..., 16:30-17:00 = slot16
+    """
+    if hour < 9 or hour > 16:
+        raise ValueError("Hour must be between 9 and 16")
+    
+    if hour == 16 and minute > 30:
+        raise ValueError("Last slot ends at 17:00")
+    
+    # Calculate slot based on 30-minute intervals
+    slot_index = (hour - 9) * 2 + 1
+    if minute >= 30:
+        slot_index += 1
+    
+    return slot_index
+
+def is_slot_available(db: Session, doctor_id: int, appointment_datetime: datetime) -> bool:
+    """Check if a specific time slot is available for booking"""
+    
+    # Get slot index from appointment time
+    try:
+        slot_index = time_to_slot_index(appointment_datetime.hour, appointment_datetime.minute)
+    except ValueError:
+        return False
+    
+    # Check doctor availability for that date
+    availability = db.query(models.DoctorAvailability).filter(
+        models.DoctorAvailability.doctor_id == doctor_id,
+        models.DoctorAvailability.date == appointment_datetime.date()
+    ).first()
+
+    if not availability:
+        return False
+
+    # Check if the specific slot is available
+    slot_attr = f"slot{slot_index}"
+    is_slot_open = getattr(availability, slot_attr, False)
+    
+    if not is_slot_open:
+        return False
+    
+    # Check if slot is already booked
+    existing_appointment = db.query(models.Appointment).filter(
+        models.Appointment.doctor_id == doctor_id,
+        models.Appointment.appointment_datetime == appointment_datetime,
+        models.Appointment.status.in_(["waiting_approval", "approved"])
+    ).first()
+    
+    return existing_appointment is None
+
+def generate_appointment_id(db: Session) -> str:
+    """Generate a unique 6-character appointment ID"""
+    while True:
+        appointment_id = ''.join(random.choices(
+            string.ascii_lowercase + string.digits,
+            k=6
+        ))
+        
+        # Check if ID exists
+        if not db.query(models.Appointment).filter(models.Appointment.id == appointment_id).first():
+            return appointment_id
+
 def create_appointment(db: Session, appointment: schemas.AppointmentCreate, patient_id: str):
-    db_appointment = models.Appointment(**appointment.model_dump(), patient_id=patient_id)
+    """Create a new appointment with validation"""
+    
+    # Check if doctor exists
+    doctor = get_doctor(db, appointment.doctor_id)
+    if not doctor:
+        raise ValueError("Doctor not found")
+    
+    # Check if slot is available
+    if not is_slot_available(db, appointment.doctor_id, appointment.appointment_datetime):
+        raise ValueError("Selected time slot is not available")
+    
+    # Generate unique appointment ID
+    appointment_id = generate_appointment_id(db)
+    
+    # Create appointment with waiting_approval status
+    db_appointment = models.Appointment(
+        id=appointment_id,
+        patient_id=patient_id,
+        doctor_id=appointment.doctor_id,
+        appointment_datetime=appointment.appointment_datetime,
+        notes=appointment.notes,
+        status="waiting_approval"  # Patients can only create with this status
+    )
+    
     db.add(db_appointment)
     db.commit()
     db.refresh(db_appointment)
     return db_appointment
 
 def get_appointments_by_patient(db: Session, patient_id: str):
-    return db.query(models.Appointment).filter(models.Appointment.patient_id == patient_id).all()
+    return db.query(models.Appointment).filter(
+        models.Appointment.patient_id == patient_id
+    ).order_by(models.Appointment.created_at.desc()).all()
 
 def cancel_appointment(db: Session, appointment_id: str):
-    db_appointment = db.query(models.Appointment).filter(models.Appointment.id == appointment_id).first()
+    db_appointment = db.query(models.Appointment).filter(
+        models.Appointment.id == appointment_id
+    ).first()
     if not db_appointment:
         return None
     db_appointment.status = "cancelled"
@@ -297,7 +392,7 @@ class Appointment(Base):
     patient_id = Column(String(6), ForeignKey("patients.id"))
     doctor_id = Column(Integer, ForeignKey("doctors.id"))
     appointment_datetime = Column(DateTime)
-    status = Column(String, default="scheduled")
+    status = Column(String(50), default="scheduled")
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     patient = relationship("Patient", back_populates="appointments")
@@ -337,10 +432,12 @@ class DoctorAvailability(Base):
     slot16 = Column(Boolean, default=False)
     doctor = relationship("Doctor", back_populates="availabilities")
 ===== app\schemas.py =====
+# app/schemas.py
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
-
+from sqlalchemy import Enum as SqlEnum
+import enum
 
 # Patient Schemas
 class PatientBase(BaseModel):
@@ -360,6 +457,12 @@ class PatientResponse(PatientCreate):
         from_attributes = True
 
 # Appointment Schemas
+class AppointmentStatus(str, enum.Enum):
+    WAITING_APPROVAL = "waiting_approval"
+    APPROVED = "approved"
+    DONE = "done"
+    CANCELLED = "cancelled"
+
 class AppointmentBase(BaseModel):
     doctor_id: int
     appointment_datetime: datetime
@@ -397,7 +500,6 @@ class AdminCreate(AdminBase):
     is_superadmin: bool = False
 
 # Auth Schemas
-# Auth Schemas
 class OTPRequest(BaseModel):
     mobile_number: str
 
@@ -416,22 +518,29 @@ class Token(BaseModel):
 
 # Availability Schemas
 class SlotValues(BaseModel):
-    slot1: bool
-    slot2: bool
-    slot3: bool
-    slot4: bool
-    slot5: bool
-    slot6: bool
-    slot7: bool
-    slot8: bool
-    slot9: bool
-    slot10: bool
-    slot11: bool
-    slot12: bool
-    slot13: bool
-    slot14: bool
-    slot15: bool
-    slot16: bool
+    slot1: bool = False
+    slot2: bool = False
+    slot3: bool = False
+    slot4: bool = False
+    slot5: bool = False
+    slot6: bool = False
+    slot7: bool = False
+    slot8: bool = False
+    slot9: bool = False
+    slot10: bool = False
+    slot11: bool = False
+    slot12: bool = False
+    slot13: bool = False
+    slot14: bool = False
+    slot15: bool = False
+    slot16: bool = False
+
+class AvailabilityItem(BaseModel):
+    date: str  # Format: "YYYY-MM-DD"
+    slot_values: SlotValues
+
+class BulkAvailabilityCreate(BaseModel):
+    availability: List[AvailabilityItem]
 
 class AvailabilityCreate(BaseModel):
     doctor_id: int
@@ -444,9 +553,7 @@ class AvailabilityResponse(AvailabilityCreate):
     class Config:
         from_attributes = True
 
-
-# HomeUserResponse scheme
-
+# HomeUserResponse schema
 class HomeUserResponse(BaseModel):
     patient: PatientResponse
     appointments: List[AppointmentResponse]
@@ -482,13 +589,82 @@ def create_admin(admin: schemas.AdminCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_admin)
     return db_admin
+===== app\routers\admin_auth.py =====
+# app/routers/admin_auth.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
+from jose import jwt
+from app import schemas, models
+from app.auth import get_current_admin
+from app.database import get_db
+from app.config import settings
+
+router = APIRouter()
+
+def create_admin_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire, "is_admin": True})
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+@router.post("/admin/login", response_model=schemas.Token)
+def admin_login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    """Admin login endpoint"""
+    admin = db.query(models.Admin).filter(
+        models.Admin.username == form_data.username
+    ).first()
+    
+    if not admin or admin.hashed_password != form_data.password:  # In production, use proper password hashing
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = create_admin_access_token(data={"sub": admin.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@router.post("/admin/register", response_model=schemas.AdminBase)
+def create_admin(
+    admin: schemas.AdminCreate, 
+    db: Session = Depends(get_db),
+    current_admin: models.Admin = Depends(get_current_admin)  # Only existing admin can create new admin
+):
+    """Create new admin - requires existing admin authentication"""
+    
+    # Check if admin username already exists
+    existing_admin = db.query(models.Admin).filter(
+        models.Admin.username == admin.username
+    ).first()
+    
+    if existing_admin:
+        raise HTTPException(
+            status_code=400,
+            detail="Admin username already registered"
+        )
+    
+    db_admin = models.Admin(
+        username=admin.username,
+        hashed_password=admin.password,  # Should be hashed in production
+        is_superadmin=admin.is_superadmin
+    )
+    db.add(db_admin)
+    db.commit()
+    db.refresh(db_admin)
+    return db_admin
 ===== app\routers\appointments.py =====
-from typing import List  # Add this at the top of the file
+# app/routers/appointments.py
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app import schemas, models
 from app.database import get_db
-from app.auth import get_current_patient
+from app.auth import get_current_patient, get_current_admin
 from app.crud import create_appointment, get_appointments_by_patient, cancel_appointment
 
 router = APIRouter()
@@ -499,13 +675,19 @@ def create_new_appointment(
     current_patient: models.Patient = Depends(get_current_patient),
     db: Session = Depends(get_db)
 ):
-    return create_appointment(db, appointment, current_patient.id)
+    """Create a new appointment - patients can only create with waiting_approval status"""
+    try:
+        db_appointment = create_appointment(db, appointment, current_patient.id)
+        return db_appointment
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-@router.get("/", response_model=List[schemas.AppointmentResponse])  # Now this will work
+@router.get("/", response_model=List[schemas.AppointmentResponse])
 def read_appointments(
     current_patient: models.Patient = Depends(get_current_patient),
     db: Session = Depends(get_db)
 ):
+    """Get all appointments for the current patient"""
     return get_appointments_by_patient(db, current_patient.id)
 
 @router.put("/{appointment_id}/cancel", response_model=schemas.AppointmentResponse)
@@ -514,11 +696,111 @@ def cancel_patient_appointment(
     current_patient: models.Patient = Depends(get_current_patient),
     db: Session = Depends(get_db)
 ):
-    appointment = cancel_appointment(db, appointment_id)
+    """Cancel appointment - only patients can cancel their own appointments"""
+    appointment = db.query(models.Appointment).filter(
+        models.Appointment.id == appointment_id
+    ).first()
+
     if not appointment:
         raise HTTPException(status_code=404, detail="Appointment not found")
+
     if appointment.patient_id != current_patient.id:
         raise HTTPException(status_code=403, detail="Not authorized to cancel this appointment")
+
+    if appointment.status not in ["waiting_approval", "approved"]:
+        raise HTTPException(status_code=400, detail="Cannot cancel appointment at this stage")
+
+    appointment.status = "cancelled"
+    db.commit()
+    db.refresh(appointment)
+
+    return appointment
+
+# Admin-only endpoints
+@router.get("/admin/all", response_model=List[schemas.AppointmentResponse])
+def get_all_appointments(
+    skip: int = 0,
+    limit: int = 100,
+    status: str = None,
+    db: Session = Depends(get_db),
+    admin: models.Admin = Depends(get_current_admin)
+):
+    """Get all appointments - admin only"""
+    query = db.query(models.Appointment)
+    
+    if status:
+        query = query.filter(models.Appointment.status == status)
+    
+    appointments = query.offset(skip).limit(limit).all()
+    return appointments
+
+@router.put("/{appointment_id}/approve", response_model=schemas.AppointmentResponse)
+def approve_appointment(
+    appointment_id: str,
+    db: Session = Depends(get_db),
+    admin: models.Admin = Depends(get_current_admin)
+):
+    """Approve appointment - admin only"""
+    appointment = db.query(models.Appointment).filter(
+        models.Appointment.id == appointment_id
+    ).first()
+
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    if appointment.status != "waiting_approval":
+        raise HTTPException(status_code=400, detail="Only waiting appointments can be approved")
+
+    appointment.status = "approved"
+    db.commit()
+    db.refresh(appointment)
+
+    return appointment
+
+@router.put("/{appointment_id}/done", response_model=schemas.AppointmentResponse)
+def mark_appointment_done(
+    appointment_id: str,
+    db: Session = Depends(get_db),
+    admin: models.Admin = Depends(get_current_admin)
+):
+    """Mark appointment as done - admin only"""
+    appointment = db.query(models.Appointment).filter(
+        models.Appointment.id == appointment_id
+    ).first()
+
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    if appointment.status != "approved":
+        raise HTTPException(status_code=400, detail="Only approved appointments can be marked as done")
+
+    appointment.status = "done"
+    db.commit()
+    db.refresh(appointment)
+
+    return appointment
+
+@router.put("/{appointment_id}/cancel-admin", response_model=schemas.AppointmentResponse)
+def cancel_appointment_admin(
+    appointment_id: str,
+    db: Session = Depends(get_db),
+    admin: models.Admin = Depends(get_current_admin)
+):
+    """Cancel appointment - admin only"""
+    appointment = db.query(models.Appointment).filter(
+        models.Appointment.id == appointment_id
+    ).first()
+
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    if appointment.status == "done":
+        raise HTTPException(status_code=400, detail="Cannot cancel completed appointments")
+
+    appointment.status = "cancelled"
+    db.commit()
+    db.refresh(appointment)
+
     return appointment
 ===== app\routers\auth.py =====
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -667,16 +949,168 @@ def login(verify: schemas.OTPVerify, db: Session = Depends(get_db)):
     access_token = create_access_token(data={"sub": verify.mobile_number})
     return {"access_token": access_token, "token_type": "bearer"}
 ===== app\routers\doctors.py =====
-from fastapi import APIRouter, Depends
+# app/routers/doctors.py
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app import schemas
+from datetime import datetime, date
+from app import schemas, models
 from app.database import get_db
 from app.crud import get_doctors
+from app.auth import get_current_admin
 
 router = APIRouter()
-@router.get("/", response_model=list[schemas.AppointmentResponse])
+
+@router.get("/", response_model=List[schemas.DoctorResponse])
 def read_doctors(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    """Get all doctors"""
     return get_doctors(db, skip=skip, limit=limit)
+
+@router.post("/{doctor_id}/availability")
+def set_doctor_availability(
+    doctor_id: int,
+    availability_data: schemas.BulkAvailabilityCreate,
+    db: Session = Depends(get_db),
+    admin: models.Admin = Depends(get_current_admin)
+):
+    """Set doctor availability for multiple dates - admin only"""
+    
+    # Check if doctor exists
+    doctor = db.query(models.Doctor).filter(models.Doctor.id == doctor_id).first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    
+    results = []
+    
+    for availability_item in availability_data.availability:
+        # Parse date string to date object
+        try:
+            availability_date = datetime.strptime(availability_item.date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid date format: {availability_item.date}")
+        
+        # Check if availability already exists for this doctor and date
+        existing_availability = db.query(models.DoctorAvailability).filter(
+            models.DoctorAvailability.doctor_id == doctor_id,
+            models.DoctorAvailability.date == availability_date
+        ).first()
+        
+        if existing_availability:
+            # Update existing availability
+            slot_values = availability_item.slot_values.model_dump()
+            for slot_name, slot_value in slot_values.items():
+                setattr(existing_availability, slot_name, slot_value)
+            
+            db.commit()
+            db.refresh(existing_availability)
+            results.append({
+                "date": availability_item.date,
+                "action": "updated",
+                "availability_id": existing_availability.id
+            })
+        else:
+            # Create new availability
+            new_availability = models.DoctorAvailability(
+                doctor_id=doctor_id,
+                date=availability_date,
+                **availability_item.slot_values.model_dump()
+            )
+            db.add(new_availability)
+            db.commit()
+            db.refresh(new_availability)
+            results.append({
+                "date": availability_item.date,
+                "action": "created",
+                "availability_id": new_availability.id
+            })
+    
+    return {
+        "message": "Doctor availability updated successfully",
+        "doctor_id": doctor_id,
+        "results": results
+    }
+
+@router.get("/{doctor_id}/availability")
+def get_doctor_availability(
+    doctor_id: int,
+    start_date: str = None,
+    end_date: str = None,
+    db: Session = Depends(get_db)
+):
+    """Get doctor availability for specified date range"""
+    
+    # Check if doctor exists
+    doctor = db.query(models.Doctor).filter(models.Doctor.id == doctor_id).first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    
+    query = db.query(models.DoctorAvailability).filter(
+        models.DoctorAvailability.doctor_id == doctor_id
+    )
+    
+    # Filter by date range if provided
+    if start_date:
+        try:
+            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
+            query = query.filter(models.DoctorAvailability.date >= start_date_obj)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format. Use YYYY-MM-DD")
+    
+    if end_date:
+        try:
+            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date()
+            query = query.filter(models.DoctorAvailability.date <= end_date_obj)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format. Use YYYY-MM-DD")
+    
+    availabilities = query.order_by(models.DoctorAvailability.date).all()
+    
+    # Format response
+    formatted_availability = []
+    for availability in availabilities:
+        slots = {}
+        for i in range(1, 17):
+            slot_name = f"slot{i}"
+            slots[slot_name] = getattr(availability, slot_name, False)
+        
+        formatted_availability.append({
+            "id": availability.id,
+            "date": availability.date.isoformat(),
+            "slots": slots
+        })
+    
+    return {
+        "doctor_id": doctor_id,
+        "doctor_name": doctor.name,
+        "availability": formatted_availability
+    }
+
+@router.delete("/{doctor_id}/availability/{date}")
+def delete_doctor_availability(
+    doctor_id: int,
+    date: str,
+    db: Session = Depends(get_db),
+    admin: models.Admin = Depends(get_current_admin)
+):
+    """Delete doctor availability for a specific date - admin only"""
+    
+    try:
+        availability_date = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    availability = db.query(models.DoctorAvailability).filter(
+        models.DoctorAvailability.doctor_id == doctor_id,
+        models.DoctorAvailability.date == availability_date
+    ).first()
+    
+    if not availability:
+        raise HTTPException(status_code=404, detail="Availability not found for this date")
+    
+    db.delete(availability)
+    db.commit()
+    
+    return {"message": f"Availability deleted for doctor {doctor_id} on {date}"}
 ===== app\routers\patients.py =====
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session

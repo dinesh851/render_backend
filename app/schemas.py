@@ -1,7 +1,9 @@
+# app/schemas.py
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
-
+from sqlalchemy import Enum as SqlEnum
+import enum
 
 # Patient Schemas
 class PatientBase(BaseModel):
@@ -21,6 +23,12 @@ class PatientResponse(PatientCreate):
         from_attributes = True
 
 # Appointment Schemas
+class AppointmentStatus(str, enum.Enum):
+    WAITING_APPROVAL = "waiting_approval"
+    APPROVED = "approved"
+    DONE = "done"
+    CANCELLED = "cancelled"
+
 class AppointmentBase(BaseModel):
     doctor_id: int
     appointment_datetime: datetime
@@ -58,7 +66,6 @@ class AdminCreate(AdminBase):
     is_superadmin: bool = False
 
 # Auth Schemas
-# Auth Schemas
 class OTPRequest(BaseModel):
     mobile_number: str
 
@@ -77,22 +84,29 @@ class Token(BaseModel):
 
 # Availability Schemas
 class SlotValues(BaseModel):
-    slot1: bool
-    slot2: bool
-    slot3: bool
-    slot4: bool
-    slot5: bool
-    slot6: bool
-    slot7: bool
-    slot8: bool
-    slot9: bool
-    slot10: bool
-    slot11: bool
-    slot12: bool
-    slot13: bool
-    slot14: bool
-    slot15: bool
-    slot16: bool
+    slot1: bool = False
+    slot2: bool = False
+    slot3: bool = False
+    slot4: bool = False
+    slot5: bool = False
+    slot6: bool = False
+    slot7: bool = False
+    slot8: bool = False
+    slot9: bool = False
+    slot10: bool = False
+    slot11: bool = False
+    slot12: bool = False
+    slot13: bool = False
+    slot14: bool = False
+    slot15: bool = False
+    slot16: bool = False
+
+class AvailabilityItem(BaseModel):
+    date: str  # Format: "YYYY-MM-DD"
+    slot_values: SlotValues
+
+class BulkAvailabilityCreate(BaseModel):
+    availability: List[AvailabilityItem]
 
 class AvailabilityCreate(BaseModel):
     doctor_id: int
@@ -105,9 +119,7 @@ class AvailabilityResponse(AvailabilityCreate):
     class Config:
         from_attributes = True
 
-
-# HomeUserResponse scheme
-
+# HomeUserResponse schema
 class HomeUserResponse(BaseModel):
     patient: PatientResponse
     appointments: List[AppointmentResponse]
